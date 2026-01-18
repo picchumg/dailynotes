@@ -486,7 +486,7 @@ export default function NoteEditor({ date, sharedNote, friendIds, profiles, user
             return (
               <div key={`${block.type}-${block.data.id}`} className="group">
                 {block.type === 'text' && (
-                  <div className="relative">
+                  <div className={`relative py-2 px-1 ${getUserColor(block.data.user_id).border} border-l-2 pl-3`}>
                     <textarea
                       placeholder="Start writing..."
                       value={block.data.content}
@@ -497,7 +497,7 @@ export default function NoteEditor({ date, sharedNote, friendIds, profiles, user
                         }
                       }}
                       rows={Math.max(1, block.data.content.split('\n').length)}
-                      className="w-full border-0 focus:outline-none resize-none text-gray-700 leading-relaxed text-base placeholder-gray-400 min-h-[1.5rem]"
+                      className={`w-full border-0 focus:outline-none resize-none ${getUserColor(block.data.user_id).text} leading-relaxed text-base placeholder-gray-400 min-h-[1.5rem]`}
                     />
                     <button
                       onClick={() => deleteTextBlock(block.data.id)}
