@@ -34,44 +34,65 @@ export default async function NotePage({ params }: { params: Promise<{ date: str
     user.id // Include current user
   ]
 
-  // Get all notes for this date from user and all friends
-  const { data: allNotesData } = await supabase
+  // Get the shared note for this date (any friend can have created it)
+  // We want ONE note per date that everyone can edit
+  const { data: sharedNoteData } = await supabase
     .from('notes')
     .select('*')
     .eq('date', date)
     .in('user_id', friendIds)
     .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
 
-  // Get profiles for all note authors
-  const noteUserIds = allNotesData?.map(n => n.user_id) || []
+  // Get profiles for all friends (for color coding)
   const { data: profiles } = await supabase
     .from('profiles')
     .select('id, username, full_name')
-    .in('id', noteUserIds)
+    .in('id', friendIds)
 
-  // Combine notes with user profiles
-  const allNotes = (allNotesData || []).map(note => ({
-    ...note,
-    user: profiles?.find(p => p.id === note.user_id) || { id: note.user_id, username: null, full_name: null }
-  }))
-
-  // Get user's own note (or create placeholder)
-  const userNote = allNotes.find(n => n.user_id === user.id) || null
+  // The shared note (or null if doesn't exist yet)
+  const sharedNote = sharedNoteData ? {
+    ...sharedNoteData,
+    user: profiles?.find(p => p.id === sharedNoteData.user_id) || { id: sharedNoteData.user_id, username: null, full_name: null }
+  } : null
 
   return (
     <div className="min-h-screen bg-gray-50">
       <nav className="border-b border-gray-200 bg-white">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
-            <Link href="/" className="text-xl font-semibold text-gray-900">
-              ← Back to Calendar
+            <Link href="/calendar" className="text-sm text-gray-600 hover:text-gray-900">
+              📅 Calendar
             </Link>
+            <div className="flex items-center gap-4">
+              <Link
+                href="/friends"
+                className="text-sm text-gray-600 hover:text-gray-900"
+              >
+                Friends
+              </Link>
+              <form action="/auth/signout" method="post">
+                <button
+                  type="submit"
+                  className="text-sm text-gray-600 hover:text-gray-900"
+                >
+                  Sign out
+                </button>
+              </form>
+            </div>
           </div>
         </div>
       </nav>
 
       <main className="py-8">
-        <NoteEditor date={date} userNote={userNote} allNotes={allNotes || []} userId={user.id} />
+        <NoteEditor 
+          date={date} 
+          sharedNote={sharedNote} 
+          friendIds={friendIds}
+          profiles={profiles || []}
+          userId={user.id} 
+        />
       </main>
     </div>
   )

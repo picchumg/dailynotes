@@ -46,6 +46,17 @@ CREATE TABLE IF NOT EXISTS public.todos (
   order_index INTEGER DEFAULT 0
 );
 
+-- Text blocks table (for Notion-like inline text blocks)
+CREATE TABLE IF NOT EXISTS public.text_blocks (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  note_id UUID REFERENCES public.notes(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  content TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+  order_index INTEGER DEFAULT 0
+);
+
 -- Note images table
 CREATE TABLE IF NOT EXISTS public.note_images (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
@@ -81,6 +92,7 @@ CREATE TABLE IF NOT EXISTS public.note_content_history (
 -- Indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_notes_user_date ON public.notes(user_id, date);
 CREATE INDEX IF NOT EXISTS idx_todos_note_id ON public.todos(note_id);
+CREATE INDEX IF NOT EXISTS idx_text_blocks_note_id ON public.text_blocks(note_id);
 CREATE INDEX IF NOT EXISTS idx_note_images_note_id ON public.note_images(note_id);
 CREATE INDEX IF NOT EXISTS idx_shared_notes_note_id ON public.shared_notes(note_id);
 CREATE INDEX IF NOT EXISTS idx_shared_notes_friend_id ON public.shared_notes(friend_id);
@@ -94,6 +106,7 @@ ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.friends ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.todos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.text_blocks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.note_images ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.shared_notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.note_content_history ENABLE ROW LEVEL SECURITY;
@@ -137,13 +150,20 @@ CREATE POLICY "Users can view their own notes"
   ON public.notes FOR SELECT
   USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can view shared notes"
+CREATE POLICY "Users can view friends' notes"
   ON public.notes FOR SELECT
   USING (
     EXISTS (
-      SELECT 1 FROM public.shared_notes
-      WHERE shared_notes.note_id = notes.id
-      AND shared_notes.friend_id = auth.uid()
+      SELECT 1 FROM public.friends
+      WHERE friends.user_id = notes.user_id
+      AND friends.friend_id = auth.uid()
+      AND friends.status = 'accepted'
+    )
+    OR EXISTS (
+      SELECT 1 FROM public.friends
+      WHERE friends.friend_id = notes.user_id
+      AND friends.user_id = auth.uid()
+      AND friends.status = 'accepted'
     )
   );
 
@@ -155,13 +175,20 @@ CREATE POLICY "Users can update their own notes"
   ON public.notes FOR UPDATE
   USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can update shared notes"
+CREATE POLICY "Users can update friends' notes"
   ON public.notes FOR UPDATE
   USING (
     EXISTS (
-      SELECT 1 FROM public.shared_notes
-      WHERE shared_notes.note_id = notes.id
-      AND shared_notes.friend_id = auth.uid()
+      SELECT 1 FROM public.friends
+      WHERE friends.user_id = notes.user_id
+      AND friends.friend_id = auth.uid()
+      AND friends.status = 'accepted'
+    )
+    OR EXISTS (
+      SELECT 1 FROM public.friends
+      WHERE friends.friend_id = notes.user_id
+      AND friends.user_id = auth.uid()
+      AND friends.status = 'accepted'
     )
   );
 
@@ -172,11 +199,21 @@ CREATE POLICY "Users can view todos for their notes"
     EXISTS (
       SELECT 1 FROM public.notes
       WHERE notes.id = todos.note_id
-      AND (notes.user_id = auth.uid() OR EXISTS (
-        SELECT 1 FROM public.shared_notes
-        WHERE shared_notes.note_id = notes.id
-        AND shared_notes.friend_id = auth.uid()
-      ))
+      AND (
+        notes.user_id = auth.uid()
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.user_id = notes.user_id
+          AND friends.friend_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.friend_id = notes.user_id
+          AND friends.user_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+      )
     )
   );
 
@@ -186,11 +223,21 @@ CREATE POLICY "Users can create todos for their notes"
     EXISTS (
       SELECT 1 FROM public.notes
       WHERE notes.id = todos.note_id
-      AND (notes.user_id = auth.uid() OR EXISTS (
-        SELECT 1 FROM public.shared_notes
-        WHERE shared_notes.note_id = notes.id
-        AND shared_notes.friend_id = auth.uid()
-      ))
+      AND (
+        notes.user_id = auth.uid()
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.user_id = notes.user_id
+          AND friends.friend_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.friend_id = notes.user_id
+          AND friends.user_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+      )
     )
     AND auth.uid() = todos.user_id
   );
@@ -201,11 +248,21 @@ CREATE POLICY "Users can update todos for their notes"
     EXISTS (
       SELECT 1 FROM public.notes
       WHERE notes.id = todos.note_id
-      AND (notes.user_id = auth.uid() OR EXISTS (
-        SELECT 1 FROM public.shared_notes
-        WHERE shared_notes.note_id = notes.id
-        AND shared_notes.friend_id = auth.uid()
-      ))
+      AND (
+        notes.user_id = auth.uid()
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.user_id = notes.user_id
+          AND friends.friend_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.friend_id = notes.user_id
+          AND friends.user_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+      )
     )
   );
 
@@ -215,11 +272,119 @@ CREATE POLICY "Users can delete todos for their notes"
     EXISTS (
       SELECT 1 FROM public.notes
       WHERE notes.id = todos.note_id
-      AND (notes.user_id = auth.uid() OR EXISTS (
-        SELECT 1 FROM public.shared_notes
-        WHERE shared_notes.note_id = notes.id
-        AND shared_notes.friend_id = auth.uid()
-      ))
+      AND (
+        notes.user_id = auth.uid()
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.user_id = notes.user_id
+          AND friends.friend_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.friend_id = notes.user_id
+          AND friends.user_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+      )
+    )
+  );
+
+-- Text blocks policies
+CREATE POLICY "Users can view text blocks for their notes"
+  ON public.text_blocks FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.notes
+      WHERE notes.id = text_blocks.note_id
+      AND (
+        notes.user_id = auth.uid()
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.user_id = notes.user_id
+          AND friends.friend_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.friend_id = notes.user_id
+          AND friends.user_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+      )
+    )
+  );
+
+CREATE POLICY "Users can create text blocks for their notes"
+  ON public.text_blocks FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.notes
+      WHERE notes.id = text_blocks.note_id
+      AND (
+        notes.user_id = auth.uid()
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.user_id = notes.user_id
+          AND friends.friend_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.friend_id = notes.user_id
+          AND friends.user_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+      )
+    )
+    AND auth.uid() = text_blocks.user_id
+  );
+
+CREATE POLICY "Users can update text blocks for their notes"
+  ON public.text_blocks FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.notes
+      WHERE notes.id = text_blocks.note_id
+      AND (
+        notes.user_id = auth.uid()
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.user_id = notes.user_id
+          AND friends.friend_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.friend_id = notes.user_id
+          AND friends.user_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+      )
+    )
+  );
+
+CREATE POLICY "Users can delete text blocks for their notes"
+  ON public.text_blocks FOR DELETE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.notes
+      WHERE notes.id = text_blocks.note_id
+      AND (
+        notes.user_id = auth.uid()
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.user_id = notes.user_id
+          AND friends.friend_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.friend_id = notes.user_id
+          AND friends.user_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+      )
     )
   );
 
@@ -230,11 +395,21 @@ CREATE POLICY "Users can view images for their notes"
     EXISTS (
       SELECT 1 FROM public.notes
       WHERE notes.id = note_images.note_id
-      AND (notes.user_id = auth.uid() OR EXISTS (
-        SELECT 1 FROM public.shared_notes
-        WHERE shared_notes.note_id = notes.id
-        AND shared_notes.friend_id = auth.uid()
-      ))
+      AND (
+        notes.user_id = auth.uid()
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.user_id = notes.user_id
+          AND friends.friend_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.friend_id = notes.user_id
+          AND friends.user_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+      )
     )
   );
 
@@ -244,11 +419,21 @@ CREATE POLICY "Users can create images for their notes"
     EXISTS (
       SELECT 1 FROM public.notes
       WHERE notes.id = note_images.note_id
-      AND (notes.user_id = auth.uid() OR EXISTS (
-        SELECT 1 FROM public.shared_notes
-        WHERE shared_notes.note_id = notes.id
-        AND shared_notes.friend_id = auth.uid()
-      ))
+      AND (
+        notes.user_id = auth.uid()
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.user_id = notes.user_id
+          AND friends.friend_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.friend_id = notes.user_id
+          AND friends.user_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+      )
     )
     AND auth.uid() = note_images.user_id
   );
@@ -259,11 +444,21 @@ CREATE POLICY "Users can delete images for their notes"
     EXISTS (
       SELECT 1 FROM public.notes
       WHERE notes.id = note_images.note_id
-      AND (notes.user_id = auth.uid() OR EXISTS (
-        SELECT 1 FROM public.shared_notes
-        WHERE shared_notes.note_id = notes.id
-        AND shared_notes.friend_id = auth.uid()
-      ))
+      AND (
+        notes.user_id = auth.uid()
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.user_id = notes.user_id
+          AND friends.friend_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+        OR EXISTS (
+          SELECT 1 FROM public.friends
+          WHERE friends.friend_id = notes.user_id
+          AND friends.user_id = auth.uid()
+          AND friends.status = 'accepted'
+        )
+      )
     )
   );
 

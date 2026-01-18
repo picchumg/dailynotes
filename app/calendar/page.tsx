@@ -1,19 +1,15 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
-import NoteEditor from '@/components/NoteEditor'
+import CalendarView from '@/components/Calendar'
 import Link from 'next/link'
-import { format } from 'date-fns'
 
-export default async function HomePage() {
+export default async function CalendarPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
   if (!user) {
     redirect('/login')
   }
-
-  // Get today's date
-  const today = format(new Date(), 'yyyy-MM-dd')
 
   // Get all friends (both directions)
   const { data: friendsIAdded } = await supabase
@@ -28,34 +24,22 @@ export default async function HomePage() {
     .eq('friend_id', user.id)
     .eq('status', 'accepted')
 
-  // Combine all friend IDs
+  // Combine all friend IDs (including current user)
   const friendIds = [
     ...(friendsIAdded?.map(f => f.friend_id) || []),
     ...(friendsWhoAddedMe?.map(f => f.user_id) || []),
-    user.id // Include current user
+    user.id
   ]
 
-  // Get the shared note for today (any friend can have created it)
-  const { data: sharedNoteData } = await supabase
+  // Get all notes dates from user and all friends
+  const { data: allNotes } = await supabase
     .from('notes')
-    .select('*')
-    .eq('date', today)
+    .select('date')
     .in('user_id', friendIds)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle()
+    .order('date', { ascending: false })
 
-  // Get profiles for all friends (for color coding)
-  const { data: profiles } = await supabase
-    .from('profiles')
-    .select('id, username, full_name')
-    .in('id', friendIds)
-
-  // The shared note (or null if doesn't exist yet)
-  const sharedNote = sharedNoteData ? {
-    ...sharedNoteData,
-    user: profiles?.find(p => p.id === sharedNoteData.user_id) || { id: sharedNoteData.user_id, username: null, full_name: null }
-  } : null
+  // Get unique dates
+  const notesDates = Array.from(new Set(allNotes?.map(n => n.date) || []))
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -63,10 +47,10 @@ export default async function HomePage() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between">
             <Link
-              href="/calendar"
+              href="/"
               className="text-sm text-gray-600 hover:text-gray-900"
             >
-              📅 Calendar
+              ← Back
             </Link>
             <div className="flex items-center gap-4">
               <Link
@@ -88,15 +72,12 @@ export default async function HomePage() {
         </div>
       </nav>
 
-      <main className="py-8">
-        <NoteEditor 
-          date={today} 
-          sharedNote={sharedNote} 
-          friendIds={friendIds}
-          profiles={profiles || []}
-          userId={user.id} 
-        />
+      <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="rounded-lg bg-white p-6 shadow-sm">
+          <CalendarView notesDates={notesDates} />
+        </div>
       </main>
     </div>
   )
 }
+
